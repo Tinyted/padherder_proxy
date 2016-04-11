@@ -15,6 +15,7 @@ API_ENDPOINT = 'https://www.padherder.com/user-api'
 URL_MONSTER_DATA = 'https://www.padherder.com/api/monsters/'
 URL_ACTIVE_SKILLS = 'https://www.padherder.com/api/active_skills/'
 URL_USER_DETAILS = '%s/user/%%s/' % (API_ENDPOINT)
+URL_USER_PROFILE = '%s/profile/%%s/' % (API_ENDPOINT)
 URL_MONSTER_CREATE = '%s/monster/' % (API_ENDPOINT)
 
 
@@ -77,8 +78,8 @@ LATENT_BIT_TO_PH_ID = {
 12: 6, # fire resist
 14: 7, # water resist
 16: 8, # green resist
-20: 9, # dark resist
-18: 10, # light resist
+18: 9, # dark resist
+20: 10, # light resist
 22: 11, # skill block resist
 }
 
@@ -137,6 +138,12 @@ class SyncRecord:
                 return 'Removed monster %s' % (self.base_data['name'])
             else:
                 return 'Failed to remove monster %s' % (self.base_data['name'])
+        elif self.operation == SYNC_UPDATE_RANK:
+            r = session.patch(self.url, dict(rank=self.base_data))
+            if r.status_code == requests.codes.ok:
+                return 'Updated rank'
+            else:
+                return 'Failed updating rank'
         else:
             return "Internal error: unknown operation"
         
@@ -225,37 +232,37 @@ def do_sync(raw_captured_data, status_ctrl, region, simulate=False):
             mon_array[9] = min(mon_array[9], len(base_data['awoken_skills']))
             # cap skill to monster's max skill
             if 'max_skill' in base_data:
-                mon_array[3] = min(mon_array[3], base_data['max_skill'])
+                mon_array[3] = min(mon_array[3], base_data['max_skill'] + 1)
             
             latents = get_latents(mon_array[10])
             
             if mon_array[0] in existing_monsters:
                 existing_data = existing_monsters.get(mon_array[0])
-                if mon_array[1] > existing_data['current_xp'] or \
-                   mon_array[3] > existing_data['current_skill'] or \
-                   mon_array[5] != existing_data['monster'] or \
-                   mon_array[6] > existing_data['plus_hp'] or \
-                   mon_array[7] > existing_data['plus_atk'] or \
-                   mon_array[8] > existing_data['plus_rcv'] or \
-                   mon_array[9] > existing_data['current_awakening'] or \
+                if mon_array[1] != existing_data['current_xp'] or \
+                   mon_array[3] != existing_data['current_skill'] or \
+                   jp_id != existing_data['monster'] or \
+                   mon_array[6] != existing_data['plus_hp'] or \
+                   mon_array[7] != existing_data['plus_atk'] or \
+                   mon_array[8] != existing_data['plus_rcv'] or \
+                   mon_array[9] != existing_data['current_awakening'] or \
                    len(latents.viewitems() - existing_data.viewitems()) > 0:
                     update_data = {}
-                    update_data['monster'] = mon_array[5]
-                    if mon_array[1] > existing_data['current_xp']:
+                    update_data['monster'] = jp_id
+                    if mon_array[1] != existing_data['current_xp']:
                         update_data['current_xp'] = mon_array[1]
-                    if mon_array[3] > existing_data['current_skill']:
+                    if mon_array[3] != existing_data['current_skill']:
                         update_data['current_skill'] = mon_array[3]
-                    if mon_array[5] > existing_data['monster']:
+                    if mon_array[5] != existing_data['monster']:
                         update_data['current_skill'] = mon_array[3]
                         update_data['current_xp'] = mon_array[1]
                         update_data['current_awakening'] = mon_array[9]
-                    if mon_array[6] > existing_data['plus_hp']:
+                    if mon_array[6] != existing_data['plus_hp']:
                         update_data['plus_hp'] = mon_array[6]
-                    if mon_array[7] > existing_data['plus_atk']:
+                    if mon_array[7] != existing_data['plus_atk']:
                         update_data['plus_atk'] = mon_array[7]
-                    if mon_array[8] > existing_data['plus_rcv']:
+                    if mon_array[8] != existing_data['plus_rcv']:
                         update_data['plus_rcv'] = mon_array[8]
-                    if mon_array[9] > existing_data['current_awakening']:
+                    if mon_array[9] != existing_data['current_awakening']:
                         update_data['current_awakening'] = mon_array[9]
                     if len(latents.viewitems() - existing_data.viewitems()) > 0:
                         update_data.update(latents)
@@ -282,6 +289,7 @@ def do_sync(raw_captured_data, status_ctrl, region, simulate=False):
                     sync_records.append(SyncRecord(SYNC_ADD, base_data, update_data, None))
         
         for mon in existing_monsters.values():
+            base_data = monster_data[mon['monster']]
             sync_records.append(SyncRecord(SYNC_DELETE, base_data, None, mon['url']))
         
         # Maybe update materials
@@ -289,6 +297,10 @@ def do_sync(raw_captured_data, status_ctrl, region, simulate=False):
             new_count = material_counts.get(monster_id, 0)
             if new_count != material['count']:
                 sync_records.append(SyncRecord(SYNC_UPDATE_MATERIAL, monster_data[monster_id], dict(count=new_count, old_count=material['count']), material['url']))
+
+        # Maybe update rank
+        if captured_data['lv'] != raw_user_data['profile']['rank']:
+            sync_records.append(SyncRecord(SYNC_UPDATE_RANK, captured_data['lv'], url=URL_USER_PROFILE % raw_user_data['profile']['id']))
 
 
         # and run the syncs
@@ -375,6 +387,14 @@ PDX_IDS = {v['pdx_id']: k for k, v in MONSTER_IDS.items() }
 US_IDS = {v['us_id']: k for k, v in MONSTER_IDS.items() }
 
 if __name__ == '__main__':
+    app = wx.App(False)
+    config = wx.Config("padherder_proxy_testing")
+    wx.ConfigBase.Set(config)
+    
+    find_unknown_xp_curves(config)
+    
+    sys.exit(1)
+    
     session = requests.Session()
     session.headers = headers
     # Limit the session to a single concurrent connection
@@ -401,9 +421,6 @@ if __name__ == '__main__':
     contents = f.read()
     f.close()
     
-    app = wx.App(False)
-    config = wx.Config("padherder_proxy_testing")
-    wx.ConfigBase.Set(config)
     
     config.Write("username", sys.argv[2])
     config.Write("password", sys.argv[3])

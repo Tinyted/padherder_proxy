@@ -17,13 +17,14 @@ import wx.lib.hyperlink as hl
 import wx.grid
 from urlparse import urljoin
 import traceback
+from distutils.version import LooseVersion
 
 import dnsproxy
 import padherder_sync
 import custom_events
 from constants import *
 
-PH_PROXY_VERSION = "1.8"
+PH_PROXY_VERSION = "2.1"
 
 parse_host_header = re.compile(r"^(?P<host>[^:]+|\[.+\])(?::(?P<port>\d+))?$")
 
@@ -366,9 +367,9 @@ def is_out_of_date(main_tab):
         wx.PostEvent(main_tab, evt)
     
     releases = json.loads(r.content)
-    current_ver = float(PH_PROXY_VERSION)
+    current_ver = LooseVersion(PH_PROXY_VERSION)
     for rel in releases:
-        rel_version = float(rel['tag_name'][1:])
+        rel_version = LooseVersion(rel['tag_name'][1:])
         if rel_version > current_ver:
             return True
     
